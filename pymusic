@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+import pygame as pg
+import sqlite3
+import random
+import os
+import sys
+
+larghezza = 800
+altezza = 450
+song_listed = 25
+dir = "/home/luca/music/"
+pg.display.set_caption("pymusic")
+screen = pg.display.set_mode((larghezza, altezza),pg.RESIZABLE)
+clock = pg.time.Clock()
+n_y_selected = 0
+n_x_selected = 0
+time_playing = 0.0
+full_time = 0.0
+t_time_playing = 0.0
+fail_to_load = False
+in_pause = False
+loop = False
+
+def display_song_list(start_index):
+    for i in range(start_index, min(start_index + song_listed, len(files))):
+        text_surface = local_font.render(files[i], False, 'black')
+        screen.blit(text_surface, (5, 5 + (i - start_index) * (20 + 5)))
+
+db_path = os.path.join('/tmp', 'pymusic.db')
+conn = sqlite3.connect(db_path)
+cursor = conn.cursor()
+
+cursor.execute('''CREATE TABLE IF NOT EXISTS music_files
+                  (filename TEXT UNIQUE)''')
+
+for filename in os.listdir(dir):
+    file_path = os.path.join(dir, filename)
+    if os.path.isfile(file_path):
+        try:
+            cursor.execute("INSERT INTO music_files (filename) VALUES (?)", (filename,))
+        except sqlite3.IntegrityError:
+            pass
+
+cursor.execute("SELECT filename FROM music_files")
+files = [item[0] for item in cursor.fetchall()]
+
+cursor.execute("SELECT COUNT(*) FROM music_files")
+total_songs = cursor.fetchone()[0]
+
+if len(files) > 0:
+    file = random.choice(files)
+    path = os.path.join(dir, file)
+        
+    pg.mixer.pre_init(44100, -16, 2, 2048)
+
+    pg.mixer.init()
+
+    def sound_load(mode, loop):
+        global file, path, fail_to_load, full_time
+        if mode == 'random':
+            file = random.choice(files)
+        elif mode == 'select':
+            if n_x_selected+n_y_selected < total_songs:
+                file = files[n_y_selected+n_x_selected]
+            else:
+                return
+        path = os.path.join(dir, file)
+        try:
+            pg.mixer.music.load(path)
+            fail_to_load = False
+            full_time = (pg.mixer.Sound(path).get_length())
+            if loop == True:
+                pg.mixer.music.play(-1)
+            if loop == False:
+                pg.mixer.music.play(1)
+        except:
+            fail_to_load = True
+
+    pg.font.init()
+    #external_font = pg.font.Font("dogica.ttf", 20)
+    local_font = pg.font.SysFont('dogica', 20)
+    
+    while True:
+        clock.tick(120)
+
+        screen.fill("lightgrey")
+        
+        #selectsong
+        pg.draw.rect(screen, "darkgrey", (0, 5+n_y_selected*(20+5), screen.get_width(), 20))
+
+        #listacanzoni
+        display_song_list(n_x_selected)
+        
+        #canzone corrente
+        if pg.mixer.music.get_busy() or in_pause:
+            text_surface = local_font.render(file, False, 'black')
+        elif fail_to_load == False:
+            text_surface = local_font.render("select a song", False, 'black')
+        elif fail_to_load == True:
+            text_surface = local_font.render(("fail to load "+file), False, 'black')
+        
+        screen.blit(text_surface, (5,screen.get_height()-65))
+        #tempo totale
+        if pg.mixer.music.get_busy() or in_pause:
+            text_surface = local_font.render(str('% 0.3f' % full_time), False, 'black')
+            screen.blit(text_surface, (screen.get_width()//2+500, screen.get_height() - 30))
+        
+        #tempo in corso
+        if pg.mixer.music.get_busy() or in_pause:
+            time_playing = pg.mixer.music.get_pos()/1000.0
+            text_surface = local_font.render(str(time_playing), False, 'black')
+            screen.blit(text_surface, (screen.get_width()//2+300, screen.get_height() - 30))
+        
+        
+        empty_bar = pg.draw.rect(screen, "darkgrey", (5, screen.get_height()-30, (screen.get_width()//2)+5, 20))
+        
+        if pg.mixer.music.get_busy() or in_pause:
+            loading_bar = pg.draw.rect(screen, "firebrick", (5, screen.get_height()-30, (((screen.get_width()//2)+5)*time_playing)/full_time, 20))
+
+        pg.display.update()
+        for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    conn.commit()
+                    conn.close()
+                    pg.quit()
+                    sys.exit()
+                if pg.key.get_pressed()[pg.K_q]:
+                    conn.commit()
+                    conn.close()
+                    pg.quit()
+                    sys.exit()
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_SPACE]:
+                        if pg.mixer.music.get_busy():
+                            in_pause = True
+                            
+                            pg.mixer.music.pause()
+                        else:
+                            pg.mixer.music.unpause()
+                            in_pause = False
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_r]:
+                        if pg.mixer.music.get_busy():
+                            pg.mixer.music.stop()
+                            pg.mixer.music.unload()
+                            sound_load('random', loop)
+                        else:
+                            sound_load('random', loop)
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_DOWN]:
+                        if n_y_selected < song_listed-1:
+                            n_y_selected += 1
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_UP]:
+                        if n_y_selected > 0:
+                            n_y_selected -= 1
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_RIGHT]:
+                        if n_x_selected + song_listed < len(files):
+                            n_x_selected += song_listed
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_LEFT]:
+                        if n_x_selected + song_listed > song_listed:
+                            n_x_selected -= song_listed
+                if event.type == pg.KEYDOWN:
+                    if pg.key.get_pressed()[pg.K_RETURN]:
+                        if pg.mixer.music.get_busy():
+                            pg.mixer.music.stop()
+                            pg.mixer.music.unload()    
+                            sound_load('select', loop)
+                        else:
+                            sound_load('select', loop)
+                        
+else:
+    print("not files found")
+    conn.commit()
+    conn.close()
+    pg.quit()
+    sys.exit()
+
+pg.quit()
+sys.exit()
